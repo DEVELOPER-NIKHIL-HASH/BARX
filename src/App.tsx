@@ -2,7 +2,6 @@
 import { useState } from 'react'
 import {
   Activity,
-  BarChart3,
   CandlestickChart,
   ChevronDown,
   Clock3,

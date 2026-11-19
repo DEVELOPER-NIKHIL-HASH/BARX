@@ -10,7 +10,7 @@ import {
 } from 'lightweight-charts'
 import {
   Activity, Clock3, Layers3, Play, Pause, RotateCcw,
-  Settings, TrendingUp, Wallet, SkipForward, RefreshCw,
+  Settings, Wallet, SkipForward, RefreshCw,
   AlertCircle, Zap,
 } from 'lucide-react'
 

@@ -1,22 +1,5 @@
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Activity,
-  CandlestickChart,
-  Clock3,
-  Layers3,
-  Play,
-  Pause,
-  RotateCcw,
-  Search,
-  Settings,
-  TrendingUp,
-  Wallet,
-  SkipForward,
-  Zap,
-  AlertCircle,
-  RefreshCw,
-} from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createChart,
   CandlestickSeries,
@@ -25,6 +8,11 @@ import {
   type CandlestickData,
   type Time,
 } from 'lightweight-charts'
+import {
+  Activity, Clock3, Layers3, Play, Pause, RotateCcw,
+  Settings, TrendingUp, Wallet, SkipForward, RefreshCw,
+  AlertCircle, Zap,
+} from 'lucide-react'
 
 type Candle = CandlestickData<Time>
 type Timeframe = '1m' | '5m' | '15m' | '1h' | '1d'
@@ -37,113 +25,76 @@ type Order = {
 }
 
 const intervals: Timeframe[] = ['1m', '5m', '15m', '1h', '1d']
-
-const intervalLabels: Record<Timeframe, string> = {
-  '1m': '1m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1H',
-  '1d': '1D',
-}
-
 const speeds = [1, 2, 5, 10]
 
-const formatPrice = (price: number) =>
-  price.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+const money = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 function App() {
-  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const chartContainer = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
   const [candles, setCandles] = useState<Candle[]>([])
-  const [timeframe, setTimeframe] = useState<Timeframe>('1m')
-  const [replayIndex, setReplayIndex] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [timeframe, setTimeframe] = useState<Timeframe>('1h')
+  const [index, setIndex] = useState(99)
+  const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [lastUpdated, setLastUpdated] = useState('')
-
   const [balance, setBalance] = useState(10000)
   const [position, setPosition] = useState(0)
-  const [averageEntry, setAverageEntry] = useState(0)
-  const [orders, setOrders] = useState<Order[]>([])
-  const [activeTab, setActiveTab] = useState('Overview')
+  const [entry, setEntry] = useState(0)
   const [quantity, setQuantity] = useState('0.001')
+  const [orders, setOrders] = useState<Order[]>([])
+  const [tab, setTab] = useState('Overview')
 
-  // Load historical BTC/USDT candles from Binance.
-  const loadMarketData = useCallback(async () => {
+  const current = candles[index]
+  const price = current?.close ?? 0
+  const pnl = position * (price - entry)
+  const value = position * price
+  const progress = candles.length > 1 ? index / (candles.length - 1) * 100 : 0
+  const change = current ? (current.close - current.open) / current.open * 100 : 0
+  const date = current ? new Date(Number(current.time) * 1000).toLocaleString() : '--'
+
+  const loadData = useCallback(async () => {
     setLoading(true)
     setError('')
-    setIsPlaying(false)
-    setCandles([])
-    setReplayIndex(0)
-
+    setPlaying(false)
     try {
       const url = new URL('https://api.binance.com/api/v3/klines')
       url.searchParams.set('symbol', 'BTCUSDT')
       url.searchParams.set('interval', timeframe)
       url.searchParams.set('limit', '500')
-
       const response = await fetch(url.toString())
-
-      if (!response.ok) {
-        throw new Error(`Binance API error: ${response.status}`)
-      }
-
-      const result: unknown = await response.json()
-
-      if (!Array.isArray(result) || result.length === 0) {
-        throw new Error('No historical market data received.')
-      }
-
-      const parsed: Candle[] = result.map((row: any) => ({
+      if (!response.ok) throw new Error(`Binance error: ${response.status}`)
+      const data = await response.json()
+      if (!Array.isArray(data) || !data.length) throw new Error('No candle data received')
+      const parsed: Candle[] = data.map((row: any[]) => ({
         time: Math.floor(Number(row[0]) / 1000) as Time,
         open: Number(row[1]),
         high: Number(row[2]),
         low: Number(row[3]),
         close: Number(row[4]),
       }))
-
-      if (
-        parsed.some(
-          (candle) =>
-            !Number.isFinite(candle.open) ||
-            !Number.isFinite(candle.high) ||
-            !Number.isFinite(candle.low) ||
-            !Number.isFinite(candle.close),
-        )
-      ) {
-        throw new Error('Invalid candle data received.')
-      }
-
       setCandles(parsed)
-      setReplayIndex(Math.min(99, parsed.length - 1))
-      setLastUpdated(new Date().toLocaleTimeString())
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to connect to Binance.',
-      )
+      setIndex(Math.min(99, parsed.length - 1))
+    } catch (e) {
+      setCandles([])
+      setIndex(0)
+      setError(e instanceof Error ? e.message : 'Unable to load market data')
     } finally {
       setLoading(false)
     }
   }, [timeframe])
 
   useEffect(() => {
-    loadMarketData()
-  }, [loadMarketData])
+    loadData()
+  }, [loadData])
 
-  // Initialize TradingView Lightweight Charts.
   useEffect(() => {
-    const container = chartContainerRef.current
+    const container = chartContainer.current
     if (!container) return
-
     const chart = createChart(container, {
       autoSize: true,
       layout: {
@@ -155,26 +106,12 @@ function App() {
         vertLines: { color: 'rgba(255,255,255,0.04)' },
         horzLines: { color: 'rgba(255,255,255,0.04)' },
       },
-      rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.1)',
-      },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
       timeScale: {
         borderColor: 'rgba(255,255,255,0.1)',
         timeVisible: true,
-        secondsVisible: false,
-      },
-      crosshair: {
-        vertLine: {
-          color: '#22d3ee',
-          labelBackgroundColor: '#0891b2',
-        },
-        horzLine: {
-          color: '#22d3ee',
-          labelBackgroundColor: '#0891b2',
-        },
       },
     })
-
     const series = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#ef4444',
@@ -183,232 +120,111 @@ function App() {
       wickUpColor: '#10b981',
       wickDownColor: '#ef4444',
     })
-
     chartRef.current = chart
-    candleSeriesRef.current = series
-
+    seriesRef.current = series
     return () => {
       chart.remove()
       chartRef.current = null
-      candleSeriesRef.current = null
+      seriesRef.current = null
     }
   }, [])
 
-  // Display only candles reached by the replay.
   useEffect(() => {
-    const series = candleSeriesRef.current
-    if (!series || candles.length === 0) return
-
-    const visibleCandles = candles.slice(0, replayIndex + 1)
-    series.setData(visibleCandles)
+    if (!seriesRef.current || !candles.length) return
+    seriesRef.current.setData(candles.slice(0, index + 1))
     chartRef.current?.timeScale().fitContent()
-  }, [candles, replayIndex])
+  }, [candles, index])
 
-  // Replay timer.
   useEffect(() => {
-    if (!isPlaying || candles.length === 0) return
-
-    const interval = window.setInterval(() => {
-      setReplayIndex((current) =>
-        Math.min(current + 1, candles.length - 1),
-      )
+    if (!playing || !candles.length) return
+    const timer = window.setInterval(() => {
+      setIndex((old) => Math.min(old + 1, candles.length - 1))
     }, 1000 / speed)
-
-    return () => window.clearInterval(interval)
-  }, [isPlaying, speed, candles.length])
+    return () => window.clearInterval(timer)
+  }, [playing, speed, candles.length])
 
   useEffect(() => {
-    if (candles.length > 0 && replayIndex >= candles.length - 1) {
-      setIsPlaying(false)
-    }
-  }, [replayIndex, candles.length])
+    if (candles.length && index >= candles.length - 1) setPlaying(false)
+  }, [index, candles.length])
 
-  const currentCandle = candles[replayIndex]
-
-  const currentPrice = currentCandle?.close ?? 0
-
-  const progress =
-    candles.length > 1
-      ? (replayIndex / (candles.length - 1)) * 100
-      : 0
-
-  const change = currentCandle
-    ? ((currentCandle.close - currentCandle.open) /
-        currentCandle.open) *
-      100
-    : 0
-
-  const unrealizedPnL =
-    position > 0 ? (currentPrice - averageEntry) * position : 0
-
-  const currentValue = position * currentPrice
-
-  const canTrade =
-    currentCandle !== undefined && currentPrice > 0
-
-  const placeOrder = (side: 'BUY' | 'SELL') => {
-    if (!canTrade) return
-
+  const trade = (side: 'BUY' | 'SELL') => {
     const amount = Number(quantity)
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      alert('Enter a valid quantity.')
+    if (!current || !Number.isFinite(amount) || amount <= 0) {
+      alert('Enter a valid quantity')
       return
     }
-
-    const price = currentPrice
     const cost = amount * price
-
     if (side === 'BUY') {
       if (cost > balance) {
-        alert('Insufficient paper balance.')
+        alert('Insufficient paper balance')
         return
       }
-
-      const newPosition = position + amount
-      const newAverage =
-        newPosition > 0
-          ? (position * averageEntry + cost) / newPosition
-          : price
-
-      setBalance((previous) => previous - cost)
-      setAverageEntry(newAverage)
-      setPosition(newPosition)
+      const total = position + amount
+      setEntry((position * entry + cost) / total)
+      setPosition(total)
+      setBalance((b) => b - cost)
     } else {
       if (amount > position) {
-        alert('Not enough BTC in your paper position.')
+        alert('Not enough BTC in your paper position')
         return
       }
-
-      setBalance((previous) => previous + cost)
-
       const remaining = position - amount
       setPosition(remaining)
-
-      if (remaining <= 0.000000001) {
-        setAverageEntry(0)
-        setPosition(0)
-      }
+      setBalance((b) => b + cost)
+      if (remaining < 0.000000001) setEntry(0)
     }
-
-    const newOrder: Order = {
+    setOrders((old) => [{
       id: Date.now(),
       side,
       price,
       time: new Date().toLocaleTimeString(),
       quantity: amount,
-    }
-
-    setOrders((previous) => [newOrder, ...previous])
+    }, ...old])
   }
 
-  const resetReplay = () => {
-    setIsPlaying(false)
-    setReplayIndex(0)
+  const reset = () => {
+    setPlaying(false)
+    setIndex(0)
   }
-
-  const nextCandle = () => {
-    setIsPlaying(false)
-    setReplayIndex((previous) =>
-      Math.min(previous + 1, candles.length - 1),
-    )
-  }
-
-  const previousCandle = () => {
-    setIsPlaying(false)
-    setReplayIndex((previous) => Math.max(0, previous - 1))
-  }
-
-  const replayDate = useMemo(() => {
-    if (!currentCandle) return '--'
-
-    return new Date(
-      Number(currentCandle.time) * 1000,
-    ).toLocaleString()
-  }, [currentCandle])
 
   return (
     <main className="min-h-screen bg-[#080b12] text-slate-100">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400 text-lg font-black text-slate-950">
-            B
-          </div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400 text-xl font-black text-slate-950">B</div>
           <div>
             <h1 className="text-xl font-bold tracking-wider">BARX</h1>
-            <p className="text-[10px] tracking-[0.2em] text-slate-500">
-              MARKET REPLAY TERMINAL
-            </p>
+            <p className="text-[10px] tracking-[0.2em] text-slate-500">MARKET REPLAY TERMINAL</p>
           </div>
         </div>
-
-        <div className="flex items-center gap-3 text-sm text-slate-400">
-          <span className="flex items-center gap-2">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                error ? 'bg-red-400' : 'bg-emerald-400'
-              }`}
-            />
-            {error ? 'DATA ERROR' : 'SYSTEM ONLINE'}
-          </span>
-          <button
-            className="rounded-lg border border-white/10 p-2"
-            title="Settings"
-          >
-            <Settings size={18} />
-          </button>
+        <div className="flex items-center gap-2 text-xs text-emerald-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          SYSTEM ONLINE
+          <Settings className="ml-3 text-slate-400" size={18} />
         </div>
       </header>
 
       <div className="mx-auto max-w-[1500px] p-4 md:p-6">
-        <section className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm text-slate-500">
-              Trading workspace
-            </p>
-            <h2 className="mt-1 text-2xl font-bold">
-              Market Overview
-            </h2>
+            <p className="text-sm text-slate-500">Trading workspace</p>
+            <h2 className="mt-1 text-2xl font-bold">Market Overview</h2>
           </div>
-          <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
-            HISTORICAL REPLAY · PAPER MODE
-          </div>
-        </section>
+          <span className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">HISTORICAL REPLAY · PAPER MODE</span>
+        </div>
 
         <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
-            {
-              label: 'Total Markets',
-              value: '04',
-              icon: <Layers3 />,
-            },
-            {
-              label: 'Paper Balance',
-              value: `$${formatPrice(balance)}`,
-              icon: <Wallet />,
-            },
-            {
-              label: 'BTC Position',
-              value: position.toFixed(5),
-              icon: <Activity />,
-            },
-            {
-              label: 'Replay Status',
-              value: isPlaying ? 'Playing' : 'Paused',
-              icon: <Clock3 />,
-            },
+            { label: 'Markets', value: '04', icon: <Layers3 /> },
+            { label: 'Paper Balance', value: `$${money(balance)}`, icon: <Wallet /> },
+            { label: 'BTC Position', value: position.toFixed(5), icon: <Activity /> },
+            { label: 'Replay Status', value: playing ? 'Playing' : 'Paused', icon: <Clock3 /> },
           ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-xl border border-white/10 bg-[#101622] p-4"
-            >
+            <div key={item.label} className="rounded-xl border border-white/10 bg-[#101622] p-4">
               <div className="mb-3 flex items-center justify-between text-slate-500">
-                <span className="text-xs">{item.label}</span>
-                {item.icon}
+                <span className="text-xs">{item.label}</span>{item.icon}
               </div>
-              <p className="break-all text-xl font-bold">
-                {item.value}
-              </p>
+              <p className="break-all text-xl font-bold">{item.value}</p>
             </div>
           ))}
         </section>
@@ -417,215 +233,134 @@ function App() {
           <section className="min-w-0 rounded-xl border border-white/10 bg-[#101622]">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
               <div>
-                <h3 className="flex items-center gap-2 text-lg font-bold">
-                  BTC / USDT
-                  <span className="rounded bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-300">
-                    BINANCE
-                  </span>
-                </h3>
-                <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                  <span>Historical candlestick chart</span>
-                  {currentCandle && (
-                    <span className="text-slate-400">
-                      ${formatPrice(currentPrice)}
-                    </span>
-                  )}
-                  {currentCandle && (
-                    <span
-                      className={
-                        change >= 0
-                          ? 'text-emerald-400'
-                          : 'text-red-400'
-                      }
-                    >
-                      {change >= 0 ? '+' : ''}
-                      {change.toFixed(2)}%
-                    </span>
-                  )}
-                </div>
+                <h3 className="text-lg font-bold">BTC / USDT <span className="rounded bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-300">BINANCE</span></h3>
+                <p className="mt-1 text-xs text-slate-500">Historical candlestick chart</p>
+                {current && <p className="mt-1 text-sm">${money(price)} <span className={change >= 0 ? 'text-emerald-400' : 'text-red-400'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</span></p>}
               </div>
-
-              <div className="flex flex-wrap gap-1">
+              <div className="flex gap-1">
                 {intervals.map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => setTimeframe(item)}
-                    className={`rounded-md border px-3 py-2 text-xs transition ${
-                      timeframe === item
-                        ? 'border-cyan-400 bg-cyan-400/10 text-cyan-300'
-                        : 'border-white/10 text-slate-400 hover:bg-white/10'
-                    }`}
-                  >
-                    {intervalLabels[item]}
-                  </button>
+                  <button key={item} onClick={() => setTimeframe(item)} className={`rounded-md border px-3 py-2 text-xs ${timeframe === item ? 'border-cyan-400 bg-cyan-400/10 text-cyan-300' : 'border-white/10 text-slate-400'}`}>{item}</button>
                 ))}
               </div>
             </div>
 
             <div className="relative min-h-[350px]">
-              <div
-                ref={chartContainerRef}
-                className="h-[350px] w-full"
-              />
-
-              {loading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#101622]">
-                  <RefreshCw
-                    className="mb-3 animate-spin text-cyan-400"
-                    size={30}
-                  />
-                  <p className="text-sm text-slate-300">
-                    Loading Binance historical data...
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Fetching BTC/USDT candles
-                  </p>
-                </div>
-              )}
-
-              {!loading && error && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#101622] p-6 text-center">
-                  <AlertCircle
-                    className="mb-3 text-red-400"
-                    size={34}
-                  />
-                  <p className="font-semibold text-red-300">
-                    Market data unavailable
-                  </p>
-                  <p className="mt-2 max-w-sm text-xs text-slate-500">
-                    {error}
-                  </p>
-                  <button
-                    onClick={loadMarketData}
-                    className="mt-4 flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950"
-                  >
-                    <RefreshCw size={15} />
-                    Retry connection
-                  </button>
-                </div>
-              )}
-
-              {!loading && !error && candles.length > 0 && (
-                <div className="pointer-events-none absolute left-3 top-3 rounded bg-[#080b12]/80 px-2 py-1 text-[10px] text-slate-400">
-                  {candles.length} HISTORICAL CANDLES
-                </div>
-              )}
+              <div ref={chartContainer} className="h-[350px] w-full" />
+              {loading && <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#101622]">
+                <RefreshCw className="mb-3 animate-spin text-cyan-400" size={30} />
+                <p className="text-sm">Loading Binance data...</p>
+              </div>}
+              {!loading && error && <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#101622] p-5 text-center">
+                <AlertCircle className="mb-3 text-red-400" size={32} />
+                <p className="text-red-300">Market data unavailable</p>
+                <p className="mt-2 text-xs text-slate-500">{error}</p>
+                <button onClick={loadData} className="mt-4 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950">Retry</button>
+              </div>}
             </div>
 
             <div className="border-t border-white/10 p-4">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="font-semibold">
-                    Historical Replay
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    {replayDate}
-                  </p>
+                  <h3 className="font-semibold">Historical Replay</h3>
+                  <p className="text-xs text-slate-500">{date}</p>
                 </div>
-                <span className="text-xs text-cyan-300">
-                  {candles.length > 0
-                    ? `${replayIndex + 1} / ${candles.length} CANDLES`
-                    : 'WAITING FOR DATA'}
-                </span>
+                <span className="text-xs text-cyan-300">{candles.length ? `${index + 1} / ${candles.length} CANDLES` : 'NO DATA'}</span>
               </div>
-
-              <input
-                type="range"
-                min="0"
-                max={Math.max(candles.length - 1, 0)}
-                value={Math.min(replayIndex, Math.max(candles.length - 1, 0))}
-                disabled={candles.length === 0 || loading}
-                onChange={(event) => {
-                  setIsPlaying(false)
-                  setReplayIndex(Number(event.target.value))
-                }}
-                className="mb-4 w-full cursor-pointer accent-cyan-400"
-              />
-
+              <input type="range" min="0" max={Math.max(candles.length - 1, 0)} value={Math.min(index, Math.max(candles.length - 1, 0))} disabled={!candles.length || loading} onChange={(e) => { setPlaying(false); setIndex(Number(e.target.value)) }} className="mb-4 w-full accent-cyan-400" />
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  disabled={loading || candles.length === 0}
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-40"
-                >
-                  {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-                  {isPlaying ? 'Pause' : 'Play'}
+                <button disabled={!candles.length || loading} onClick={() => setPlaying(!playing)} className="flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-40">
+                  {playing ? <Pause size={15} /> : <Play size={15} />}{playing ? 'Pause' : 'Play'}
                 </button>
-
-                <button
-                  disabled={candles.length === 0}
-                  onClick={previousCandle}
-                  className="rounded-lg border border-white/10 p-2 text-slate-400 disabled:opacity-40"
-                  title="Previous candle"
-                >
-                  <SkipForward className="rotate-180" size={17} />
-                </button>
-
-                <button
-                  disabled={candles.length === 0}
-                  onClick={nextCandle}
-                  className="rounded-lg border border-white/10 p-2 text-slate-400 disabled:opacity-40"
-                  title="Next candle"
-                >
-                  <SkipForward size={17} />
-                </button>
-
-                <button
-                  disabled={candles.length === 0}
-                  onClick={resetReplay}
-                  className="rounded-lg border border-white/10 p-2 text-slate-400 disabled:opacity-40"
-                  title="Reset replay"
-                >
-                  <RotateCcw size={17} />
-                </button>
-
+                <button disabled={!candles.length} onClick={() => { setPlaying(false); setIndex((i) => Math.max(0, i - 1)) }} className="rounded-lg border border-white/10 p-2"><SkipForward className="rotate-180" size={17} /></button>
+                <button disabled={!candles.length} onClick={() => { setPlaying(false); setIndex((i) => Math.min(candles.length - 1, i + 1)) }} className="rounded-lg border border-white/10 p-2"><SkipForward size={17} /></button>
+                <button disabled={!candles.length} onClick={reset} className="rounded-lg border border-white/10 p-2"><RotateCcw size={17} /></button>
                 <div className="ml-auto flex items-center gap-1 rounded-lg border border-white/10 p-1">
                   <Zap size={14} className="ml-1 text-amber-400" />
-                  {speeds.map((item) => (
-                    <button
-                      key={item}
-                      onClick={() => setSpeed(item)}
-                      className={`rounded px-2 py-1 text-xs ${
-                        speed === item
-                          ? 'bg-cyan-400 text-slate-950'
-                          : 'text-slate-400 hover:bg-white/10'
-                      }`}
-                    >
-                      {item}x
-                    </button>
-                  ))}
+                  {speeds.map((s) => <button key={s} onClick={() => setSpeed(s)} className={`rounded px-2 py-1 text-xs ${speed === s ? 'bg-cyan-400 text-slate-950' : 'text-slate-400'}`}>{s}x</button>)}
                 </div>
               </div>
-
-              <div className="mt-4 flex justify-between text-xs text-slate-500">
-                <span>Replay progress</span>
-                <span>{progress.toFixed(1)}%</span>
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full rounded-full bg-cyan-400 transition-all"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
+              <div className="mt-4 flex justify-between text-xs text-slate-500"><span>Replay progress</span><span>{progress.toFixed(1)}%</span></div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-cyan-400" style={{ width: `${progress}%` }} /></div>
             </div>
           </section>
 
           <aside className="space-y-4">
             <section className="rounded-xl border border-white/10 bg-[#101622] p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <h3 className="font-semibold">Market Watchlist</h3>
-                <Search size={17} className="text-slate-500" />
+              <h3 className="mb-4 font-semibold">Market Watchlist</h3>
+              <div className="rounded-lg border border-cyan-400/30 bg-cyan-400/5 p-3">
+                <div className="flex justify-between"><span className="text-sm font-medium">BTC / USDT</span><span className="text-xs text-cyan-300">SELECTED</span></div>
+                <p className="mt-2 text-sm font-semibold">${money(price)}</p>
+                <p className="mt-1 text-xs text-slate-500">Bitcoin · Binance</p>
               </div>
+              <div className="mt-4 border-t border-white/10 pt-4">
+                <p className="mb-2 text-xs text-slate-500">DATA SOURCE</p>
+                <div className="flex justify-between text-sm"><span>Binance API</span><span className="text-emerald-400">Public</span></div>
+              </div>
+            </section>
 
-              <div className="space-y-2">
-                <div className="rounded-lg border border-cyan-400/40 bg-cyan-400/5 p-3">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-sm font-medium">
-                      BTC / USDT
-                    </span>
-                    <span className="text-xs text-cyan-300">
-                      SELECTED
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm font-semibold text-slate-200">
-                  
+            <section className="rounded-xl border border-white/10 bg-[#101622] p-4">
+              <div className="mb-4 flex items-center justify-between"><h3 className="font-semibold">Paper Trading</h3><span className="text-[10px] text-amber-300">SIMULATED</span></div>
+              <div className="mb-4 rounded-lg bg-[#080b12] p-3"><p className="text-xs text-slate-500">Available balance</p><p className="mt-1 text-xl font-bold">${money(balance)}</p></div>
+              <label className="mb-2 block text-xs text-slate-400">Quantity (BTC)</label>
+              <input type="number" min="0.000001" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="mb-3 w-full rounded-lg border border-white/10 bg-[#080b12] px-3 py-3 text-sm outline-none focus:border-cyan-400" />
+              <p className="mb-3 text-xs text-slate-500">Estimated value: ${money(price * Math.max(0, Number(quantity) || 0))}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button disabled={!current} onClick={() => trade('BUY')} className="rounded-lg bg-emerald-500 py-3 text-sm font-bold disabled:opacity-40">BUY</button>
+                <button disabled={!current} onClick={() => trade('SELL')} className="rounded-lg bg-red-500 py-3 text-sm font-bold disabled:opacity-40">SELL</button>
+              </div>
+              <p className="mt-3 text-center text-[10px] text-slate-500">Simulated trades only. No real money.</p>
+            </section>
+
+            <section className="rounded-xl border border-white/10 bg-[#101622] p-4">
+              <h3 className="mb-4 font-semibold">Position Overview</h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between"><span className="text-slate-500">BTC quantity</span><span>{position.toFixed(6)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Average entry</span><span>{entry ? `$${money(entry)}` : '--'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Market value</span><span>${money(value)}</span></div>
+                <div className="flex justify-between border-t border-white/10 pt-3"><span className="text-slate-400">Unrealized P&L</span><span className={pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>{pnl >= 0 ? '+' : '-'}${money(Math.abs(pnl))}</span></div>
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        <section className="mt-5 rounded-xl border border-white/10 bg-[#101622]">
+          <div className="flex gap-5 border-b border-white/10 px-4">
+            {['Overview', 'Order History'].map((item) => (
+              <button key={item} onClick={() => setTab(item)} className={`border-b-2 py-4 text-sm ${tab === item ? 'border-cyan-400 text-cyan-300' : 'border-transparent text-slate-500'}`}>{item}</button>
+            ))}
+          </div>
+          {tab === 'Overview' ? (
+            <div className="grid gap-4 p-4 sm:grid-cols-3">
+              <div className="rounded-lg bg-[#080b12] p-4"><p className="text-xs text-slate-500">Portfolio value</p><p className="mt-2 text-xl font-bold">${money(balance + value)}</p></div>
+              <div className="rounded-lg bg-[#080b12] p-4"><p className="text-xs text-slate-500">Open BTC position</p><p className="mt-2 text-xl font-bold">{position.toFixed(6)} BTC</p></div>
+              <div className="rounded-lg bg-[#080b12] p-4"><p className="text-xs text-slate-500">Total paper orders</p><p className="mt-2 text-xl font-bold">{orders.length}</p></div>
+            </div>
+          ) : (
+            <div className="overflow-x-auto p-4">
+              {orders.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No orders yet. Place a paper trade to get started.</p> : (
+                <table className="w-full text-left text-sm">
+                  <thead className="text-xs text-slate-500"><tr><th className="p-3">Side</th><th className="p-3">Price</th><th className="p-3">Quantity</th><th className="p-3">Time</th></tr></thead>
+                  <tbody>{orders.map((order) => (
+                    <tr key={order.id} className="border-t border-white/10">
+                      <td className={`p-3 font-semibold ${order.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{order.side}</td>
+                      <td className="p-3">${money(order.price)}</td>
+                      <td className="p-3">{order.quantity}</td>
+                      <td className="p-3 text-slate-400">{order.time}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
+
+        <footer className="mt-6 flex flex-wrap justify-between gap-2 border-t border-white/10 py-5 text-xs text-slate-500">
+          <span>BARX · Historical Market Replay</span>
+          <span>Data: Binance public API · Paper trading only</span>
+        </footer>
+      </div>
+    </main>
+  )
+}
+
+export default App
